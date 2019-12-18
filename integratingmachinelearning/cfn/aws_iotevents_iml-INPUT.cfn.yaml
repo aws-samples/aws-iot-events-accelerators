@@ -1,0 +1,171 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: "AWS::Serverless-2016-10-31"
+
+Description: Integrating machine learning with IoT Events
+
+Parameters:
+  CertificateArn:
+    Description: ARN of the activate AWS IoT certificate
+    Type: String
+  SNSEmail:
+    Description: Email to send SNS notification to
+    Type: String
+  ThingName:
+    Description: An IOT Thing to be created.
+    Type: String
+    Default: ImlIotThing      
+
+Resources:
+        
+  PolicyImlIotPipelinePolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: "ImlIotPipelinePolicy"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - "iot:Publish"
+            Resource: "arn:aws:iot:*:*:topic/state"
+          -
+            Effect: Allow
+            Action:
+              - "iotevents:BatchPutMessage"
+            Resource: "arn:aws:iotevents:*:*:input/*"     
+          -
+            Effect: Allow
+            Action:
+              - "logs:CreateLogGroup"
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+              - "logs:PutMetricFilter"
+              - "logs:PutRetentionPolicy"
+            Resource: 
+              - "arn:aws:logs:*:*:*"
+            
+  RoleImlIotPipelineRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: ImlIotPipelineRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: "Allow"
+          Principal:
+            Service:
+            - "iot.amazonaws.com"
+            - "iotevents.amazonaws.com"
+          Action:
+          - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - Ref: PolicyImlIotPipelinePolicy
+        - arn:aws:iam::aws:policy/AmazonSNSFullAccess
+
+  RoleImlIotLambdaExecutionRole:
+    # Role used by CloudFormation created Lambda functions, used by the custom
+    # resource functions to perform their objectives.
+    # Overly permissive for iot:* and iotevents:* to reduce Statement complexity
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ImlIotLambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+          - Effect: Allow
+            Action:
+            - iot:*
+            - iotevents:*
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - s3:*
+            Resource: "*"  
+          - Effect: Allow
+            Action:
+            - iam:CreateRole
+            - iam:AttachRolePolicy
+            - iam:GetRole
+            - iam:DeleteRole
+            - iam:PassRole
+            Resource: "*"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSLambdaFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+  
+  RunLambdaOnIoTCore:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./lambda_functions
+      Handler: mlLambda.lambda_handler
+      Runtime: python3.7     
+      MemorySize: 512
+      Timeout: 30       
+      Role: !GetAtt RoleImlIotLambdaExecutionRole.Arn
+      Events:
+        IoTRule:
+          Type: IoTRule
+          Properties:
+            Sql: Select * FROM 'iml_iotevents_data'
+
+  IoTThing:
+    # Resource creates thing, certificate key pair, IoT policy, and associates all
+    Type: Custom::IoTThing
+    Properties:
+      ServiceToken: !GetAtt CreateThingFunction.Arn
+      ThingName: !Ref ThingName
+      CertificateArn: !Ref CertificateArn
+  CreateThingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-CreateThingAndPolicy
+      Description: Create thing and policy, attach certificate
+      Handler: create_thing.handler
+      Runtime: python3.7
+      Role: !GetAtt RoleImlIotLambdaExecutionRole.Arn
+      Timeout: 60
+      CodeUri: ./lambda_functions
+
+  IoTEventsDetector:
+    # Resource creates IoTEvents Input and IoTEvents Detector
+    Type: Custom::IoTEventsDetector
+    Properties:
+      ServiceToken: !GetAtt CreateIoTEventsDetectorFunction.Arn
+      IoTEventRoleArn: !GetAtt RoleImlIotPipelineRole.Arn
+      SNSArn: !Ref IoTEventsDetectorSNSEmail
+  CreateIoTEventsDetectorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-CreateIoTEventsDetector
+      Description: Create Events and Detector
+      Handler: create_detector.handler
+      Runtime: python3.7
+      Role: !GetAtt RoleImlIotLambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 128
+      CodeUri: ./lambda_functions
+            
+  IoTEventsDetectorSNSEmail:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Endpoint: !Ref SNSEmail
+          Protocol: email
+      TopicName: "IoTEventsDetectorSNSEmail"

@@ -1,11 +1,6 @@
-## My Project
+## AWS Iot Events Accelerators
 
-TODO: Fill this README out!
-
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+Deployable solutions for AWS IoT Events for common design patterns, or to address specific use-cases.
 
 ## License
 

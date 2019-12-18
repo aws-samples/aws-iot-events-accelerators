@@ -1,0 +1,13 @@
+version: '3.7'
+
+services:
+  iml-iotevents:
+    init: true
+    build:
+      context: .
+      dockerfile: Dockerfile-aws-iotevents-iml
+    container_name: aws-iotevents-iml-simulatedmotor
+    image: x86_64/aws-iotevents-iml-simulatedmotor:latest
+    ports:
+      - "8883:8883"
+    entrypoint: "/aws-iotevents-iml.sh"

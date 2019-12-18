@@ -1,0 +1,5 @@
+# ~/docker/Dockerfile-iotpredictive-iml
+FROM python:2.7
+ADD . /
+WORKDIR /
+CMD [“/bin/bash”]
